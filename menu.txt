@@ -5,4 +5,4 @@
 #   2. Neeche ek line add karo:  Label|filename.ps1
 # -------------------------------------------------------
 LAN File & Printer Sharing Fix|01_lan_fix.ps1
-MAS Activate | https://raw.githubusercontent.com/massgravel/MAS/master/MAS_AIO.ps1
+Windows & Office Activate | https://get.activated.win
