@@ -1,0 +1,7 @@
+# IT Fix Toolkit - Menu Config
+# -------------------------------------------------------
+# Naya option add karna ho:
+#   1. Naya PS1 file GitHub pe upload karo
+#   2. Neeche ek line add karo:  Label|filename.ps1
+# -------------------------------------------------------
+LAN File & Printer Sharing Fix|01_lan_fix.ps1
