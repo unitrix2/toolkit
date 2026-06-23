@@ -6,4 +6,5 @@
 # -------------------------------------------------------
 LAN File & Printer Sharing Fix|01_lan_fix.ps1
 Windows & Office Activate | https://get.activated.win
-Winrar | https://raw.githubusercontent.com/neuralpain/oneclickwinrar/refs/heads/main/oneclickrar.ps1
+Winrar download and license | https://raw.githubusercontent.com/neuralpain/oneclickwinrar/refs/heads/main/oneclickrar.ps1
+Winrar License only | https://raw.githubusercontent.com/neuralpain/oneclickwinrar/refs/heads/main/licenserar.ps1
