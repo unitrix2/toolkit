@@ -102,7 +102,7 @@ try {
     }
 
     if ($targetIp) {
-        Write-Host "Found IP for $pcName: $targetIp" -ForegroundColor Green
+        Write-Host "Found IP for ${pcName}: $targetIp" -ForegroundColor Green
         
         # 6. Apply Static IP to active adapter
         $adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.Virtual -eq $false -and $_.MacAddress } | Select-Object -First 1
