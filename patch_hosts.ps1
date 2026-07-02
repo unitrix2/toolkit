@@ -1,8 +1,9 @@
 # ==============================================================================
 # Script Name: patch_hosts.ps1
-# Description: Automatically detects its own GitHub repository path, fetches the 
-#              adjacent 'hosts' file, and patches the local Windows system.
-# Features: Auto-Admin Elevation, Safe Backup (.bak), Smart Path Detection.
+# Version: 2.0 (Fixed Empty String Path Error)
+# Description: Automatically detects its remote URL even when executed via 
+#              'irm | iex' in memory, and patches the local Windows hosts file.
+# Features: Auto-Admin Elevation, Safe Backup (.bak), Robust Path Detection.
 # ==============================================================================
 
 # 1. एडमिन प्रिविलेज चेक (विंडोज सिस्टम फाइल बदलने के लिए ज़रूरी है)
@@ -14,32 +15,48 @@ if (-not $isAdmin) {
     Exit
 }
 
-# 2. स्मार्ट ऑटो-डिटेक्ट लॉजिक (यह स्क्रिप्ट के अपने रनिंग URL को खोजता है)
-# जब आप irm | iex चलाते हैं, तो स्क्रिप्ट का सोर्स URL $MyInvocation.ScriptName में होता है
-$scriptUrl = $MyInvocation.ScriptName
+Write-Host "--------------------------------------------------" -ForegroundColor Cyan
+Write-Host "Network Hosts Auto-Patching Started..." -ForegroundColor Cyan
+Write-Host "--------------------------------------------------" -ForegroundColor Cyan
 
-# डिफ़ॉल्ट रूप से अगर स्क्रिप्ट लोकल चल रही हो तो ये खाली हो सकता है, इसलिए चेक करना ज़रूरी है
+# 2. एडवांस पाथ डिटेक्शन (Error Fix Logic)
+$scriptUrl = ""
+
+# तरीका A: अगर स्क्रिप्ट सामान्य रूप से चल रही है
+if ($MyInvocation.ScriptName) {
+    $scriptUrl = $MyInvocation.ScriptName
+} 
+# तरीका B: अगर स्क्रिप्ट irm | iex (RAM Memory) के ज़रिए चल रही है
+elseif ($MyInvocation.Line) {
+    # Line कमांड में से URL को एक्सट्रैक्ट करना (जैसे irm "URL" | iex)
+    if ($MyInvocation.Line -match '"(http[^"]+)"' -or $MyInvocation.Line -match "'(http[^']+)'") {
+        $scriptUrl = $Matches[1]
+    }
+}
+
+# 3. यूआरएल को वैलिडेट करना और 'hosts' फ़ाइल का पाथ सेट करना
+$githubHostsUrl = ""
+
 if ($scriptUrl -like "http*") {
-    # स्क्रिप्ट के URL से 'patch_hosts.ps1' का नाम हटाकर सिर्फ फोल्डर का पाथ निकालना
+    # स्क्रिप्ट के नाम को हटाकर फोल्डर का पाथ निकालना और 'hosts' जोड़ना
     $repoFolderUrl = $scriptUrl -replace "patch_hosts\.ps1.*$", ""
-    # उसी फोल्डर पाथ के आगे 'hosts' फ़ाइल का नाम जोड़ना
     $githubHostsUrl = "${repoFolderUrl}hosts"
 } else {
-    # अगर आप टेस्टिंग के लिए इसे लोकल कंप्यूटर के सेम फोल्डर से चला रहे हैं
-    $githubHostsUrl = Join-Path -Path $PSScriptRoot -ChildPath "hosts"
+    # अगर लोकल टेस्टिंग कर रहे हैं
+    $githubHostsUrl = Join-Path -Path (Split-Path -Path $PSCommandPath -Parent) -ChildPath "hosts"
 }
 
 # लोकल सिस्टम के पाथ्स
 $localHostsPath = "$env:windir\System32\drivers\etc\hosts"
 $backupHostsPath = "$env:windir\System32\drivers\etc\hosts.bak"
 
-Write-Host "--------------------------------------------------" -ForegroundColor Cyan
-Write-Host "Network Hosts Auto-Patching Started..." -ForegroundColor Cyan
-Write-Host "--------------------------------------------------" -ForegroundColor Cyan
-
 try {
-    # 3. गिटहब से बगल वाली hosts फ़ाइल का डेटा रीड करना
-    Write-Host "Detecting and fetching adjacent hosts file..." -ForegroundColor White
+    # 4. डेटा रीड करना (चेक करना कि पाथ खाली तो नहीं है)
+    if ([string]::IsNullOrWhiteSpace($githubHostsUrl)) {
+        throw "Could not determine the remote hosts file path. Parameter 'Path' is empty."
+    }
+
+    Write-Host "Fetching adjacent hosts file from detected URL..." -ForegroundColor White
     $webClient = New-Object System.Net.WebClient
     $webClient.Encoding = [System.Text.Encoding]::UTF8
     
@@ -50,17 +67,17 @@ try {
     }
 
     if ([string]::IsNullOrWhiteSpace($newHostsContent)) {
-        throw "Could not read data from the detected hosts file path."
+        throw "Downloaded content is empty or file not found on GitHub."
     }
 
-    # 4. पुरानी फ़ाइल का सुरक्षित .bak बैकअप बनाना
+    # 5. पुरानी फ़ाइल का सुरक्षित .bak बैकअप बनाना
     if (Test-Path $localHostsPath) {
         Write-Host "Creating safety backup of current hosts file..." -ForegroundColor White
         Copy-Item -Path $localHostsPath -Destination $backupHostsPath -Force -ErrorAction Stop
         Write-Host "Backup successfully saved at: $backupHostsPath" -ForegroundColor Green
     }
 
-    # 5. नई फ़ाइल को सिस्टम में ओवरराइट (पैच) करना
+    # 6. नई फ़ाइल को सिस्टम में ओवरराइट (पैच) करना
     Write-Host "Applying new local IP mappings to Windows..." -ForegroundColor White
     Set-Content -Path $localHostsPath -Value $newHostsContent -Encoding UTF8 -Force -ErrorAction Stop
     
@@ -71,10 +88,9 @@ try {
 
 } catch {
     Write-Host "--------------------------------------------------" -ForegroundColor Red
-    Write-Host "ERROR: Script failed to apply changes." -ForegroundColor Red
-    Write-Host "Details: $_" -ForegroundColor Red
+    Write-Host "[ERR] Feature load nahi hua: $_" -ForegroundColor Red
     Write-Host "--------------------------------------------------" -ForegroundColor Red
 }
 
 # स्क्रीन को होल्ड रखने के लिए
-Read-Host "Press Enter to finish"
+Read-Host "Enter dabao"
