@@ -6,7 +6,7 @@
 # Features: Auto-Admin Elevation, Safe Backup (.bak), Robust Path Detection.
 # ==============================================================================
 
-# 1. एडमिन प्रिविलेज चेक (विंडोज सिस्टम फाइल बदलने के लिए ज़रूरी है)
+# 1. Admin privilege check (Required to modify Windows system files)
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
@@ -19,39 +19,47 @@ Write-Host "--------------------------------------------------" -ForegroundColor
 Write-Host "Network Hosts Auto-Patching Started..." -ForegroundColor Cyan
 Write-Host "--------------------------------------------------" -ForegroundColor Cyan
 
-# 2. एडवांस पाथ डिटेक्शन (Error Fix Logic)
+# 2. Advanced Path Detection (Error Fix Logic)
 $scriptUrl = ""
 
-# तरीका A: अगर स्क्रिप्ट सामान्य रूप से चल रही है
+# Method A: If the script is running normally
 if ($MyInvocation.ScriptName) {
     $scriptUrl = $MyInvocation.ScriptName
 } 
-# तरीका B: अगर स्क्रिप्ट irm | iex (RAM Memory) के ज़रिए चल रही है
+# Method B: If the script is running via irm | iex (RAM Memory)
 elseif ($MyInvocation.Line) {
-    # Line कमांड में से URL को एक्सट्रैक्ट करना (जैसे irm "URL" | iex)
-    if ($MyInvocation.Line -match '"(http[^"]+)"' -or $MyInvocation.Line -match "'(http[^']+)'") {
+    # Extract the URL from the command line (e.g. irm "URL" | iex)
+    if ($MyInvocation.Line -match '(http[^\s''"]+)') {
         $scriptUrl = $Matches[1]
     }
 }
 
-# 3. यूआरएल को वैलिडेट करना और 'hosts' फ़ाइल का पाथ सेट करना
+# 3. Validate the URL and set the path for the 'hosts' file
 $githubHostsUrl = ""
 
 if ($scriptUrl -like "http*") {
-    # स्क्रिप्ट के नाम को हटाकर फोल्डर का पाथ निकालना और 'hosts' जोड़ना
+    # Remove the script name to get the folder URL and append 'hosts'
     $repoFolderUrl = $scriptUrl -replace "patch_hosts\.ps1.*$", ""
     $githubHostsUrl = "${repoFolderUrl}hosts"
 } else {
-    # अगर लोकल टेस्टिंग कर रहे हैं
-    $githubHostsUrl = Join-Path -Path (Split-Path -Path $PSCommandPath -Parent) -ChildPath "hosts"
+    # If running locally for testing
+    $scriptDir = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+        if ([string]::IsNullOrWhiteSpace($PSCommandPath)) {
+            $scriptDir = (Get-Location).Path
+        } else {
+            $scriptDir = Split-Path -Path $PSCommandPath -Parent
+        }
+    }
+    $githubHostsUrl = Join-Path -Path $scriptDir -ChildPath "hosts"
 }
 
-# लोकल सिस्टम के पाथ्स
+# Local system paths
 $localHostsPath = "$env:windir\System32\drivers\etc\hosts"
 $backupHostsPath = "$env:windir\System32\drivers\etc\hosts.bak"
 
 try {
-    # 4. डेटा रीड करना (चेक करना कि पाथ खाली तो नहीं है)
+    # 4. Read data (check that the path is not empty)
     if ([string]::IsNullOrWhiteSpace($githubHostsUrl)) {
         throw "Could not determine the remote hosts file path. Parameter 'Path' is empty."
     }
@@ -70,14 +78,14 @@ try {
         throw "Downloaded content is empty or file not found on GitHub."
     }
 
-    # 5. पुरानी फ़ाइल का सुरक्षित .bak बैकअप बनाना
+    # 5. Create a safe .bak backup of the old file
     if (Test-Path $localHostsPath) {
         Write-Host "Creating safety backup of current hosts file..." -ForegroundColor White
         Copy-Item -Path $localHostsPath -Destination $backupHostsPath -Force -ErrorAction Stop
         Write-Host "Backup successfully saved at: $backupHostsPath" -ForegroundColor Green
     }
 
-    # 6. नई फ़ाइल को सिस्टम में ओवरराइट (पैच) करना
+    # 6. Overwrite (patch) the new file into the system
     Write-Host "Applying new local IP mappings to Windows..." -ForegroundColor White
     Set-Content -Path $localHostsPath -Value $newHostsContent -Encoding UTF8 -Force -ErrorAction Stop
     
@@ -88,9 +96,9 @@ try {
 
 } catch {
     Write-Host "--------------------------------------------------" -ForegroundColor Red
-    Write-Host "[ERR] Feature load nahi hua: $_" -ForegroundColor Red
+    Write-Host "[ERR] Feature failed to load: $_" -ForegroundColor Red
     Write-Host "--------------------------------------------------" -ForegroundColor Red
 }
 
-# स्क्रीन को होल्ड रखने के लिए
-Read-Host "Enter dabao"
+# Hold the screen so it doesn't close immediately
+Read-Host "Press Enter to exit"
