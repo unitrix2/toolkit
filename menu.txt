@@ -13,3 +13,4 @@ Patch Host File|patch_hosts.ps1
 Auto IP Patch (by PC Name)|auto_ip_patch.ps1
 Manual IP Patch (Choose IP)|manual_ip_patch.ps1
 Reset DHCP (Automatic IP)|reset_ip_dhcp.ps1
+Setup Shared PC|SetupSharedPC.ps1
