@@ -1104,17 +1104,22 @@ function Invoke-RemoteFleetCheck {
     $series = Get-MySeries
     $others = $Pcs | Where-Object { $_.Host -ine $env:COMPUTERNAME }
 
-    Write-Host ("     {0,-20} {1,-16} {2,-10} {3,-12} {4,-8} {5,-8} {6}" -f "LABEL","IP","WINRM","CATEGORY","GW-UP","PINGRULE","SHARE") -ForegroundColor DarkGray
+    Write-Host ("     {0,-20} {1,-16} {2,-8} {3,-10} {4,-12} {5,-8} {6,-8} {7}" -f "LABEL","IP","PING","WINRM","CATEGORY","GW-UP","PINGRULE","SHARE") -ForegroundColor DarkGray
     foreach ($pc in $others) {
         $ip = "$series.$($pc.Octet)"
+        # Direct ICMP test from THIS PC (the caller) -- this is the actual real-world
+        # "can I ping that PC" answer, independent of WinRM/remoting entirely.
+        $pingOk  = Test-Connection -ComputerName $ip -Count 1 -Quiet -ErrorAction SilentlyContinue
+        $pingCol = if ($pingOk) { 'Green' } else { 'Red' }
+        Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $ip) -NoNewline -ForegroundColor Gray
+        Write-Host ("{0,-8}" -f $(if ($pingOk) {"UP"} else {"DOWN"})) -NoNewline -ForegroundColor $pingCol
+
         if (-not (Test-PortOpen $ip 5985)) {
-            Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $ip) -NoNewline -ForegroundColor Gray
             Write-Host "unreachable" -ForegroundColor Red
             continue
         }
         $snap = Get-RemoteHealthSnapshot $ip $pc.Octet $cred
         if (-not $snap) {
-            Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $ip) -NoNewline -ForegroundColor Gray
             Write-Host "auth/RPC FAIL" -ForegroundColor Red
             continue
         }
@@ -1122,7 +1127,6 @@ function Invoke-RemoteFleetCheck {
         $gwCol  = if ($snap.GatewayUp) { 'Green' } else { 'Yellow' }
         $prCol  = if ($snap.PingRuleOn) { 'Green' } else { 'Red' }
         $shCol  = if ($snap.ShareExists) { 'Green' } else { 'Red' }
-        Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $ip) -NoNewline -ForegroundColor Gray
         Write-Host ("{0,-10}" -f "OK") -NoNewline -ForegroundColor Green
         Write-Host ("{0,-12}" -f $snap.Category) -NoNewline -ForegroundColor $catCol
         Write-Host ("{0,-8}" -f $(if ($snap.GatewayUp) {"UP"} else {"DOWN"})) -NoNewline -ForegroundColor $gwCol
