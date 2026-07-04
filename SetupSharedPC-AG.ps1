@@ -14,6 +14,7 @@
 #   10 ACCOUNTS        Create / delete local accounts
 #   11 PRINTER FIX     Windows 11 host fix for Win7 <-> Win11 printer sharing
 #                       (Windows 7 side uses a SEPARATE offline file, see chat)
+#   12 REMOTE CHECK    Live status from every PC via WinRM -- no visit needed
 # =====================================================================
 
 # ============================ CONFIG =================================
@@ -34,11 +35,11 @@ $Series = "192.168.0"
 # 3) MASTER LIST -- Windows PC name -> last IP number -> drive label
 #    (IP = <series>.<Octet> , e.g. 192.168.0.241 for CCL-PC7)
 $Pcs = @(
-    @{ Host = "CCL-PC2"; Octet = 247; Label = "Mohit"              },
+    @{ Host = "CCL-PC2"; Octet = 246; Label = "Mohit"              },
     @{ Host = "CCL-PC3"; Octet = 244; Label = "Sunil Kushwaha Sir" },
-    @{ Host = "CCL-PC4"; Octet = 246; Label = "Vipin"              },
+    @{ Host = "CCL-PC4"; Octet = 248; Label = "Vipin"              },
     @{ Host = "CCL-PC5"; Octet = 243; Label = "Aseem Meena Sir"    },
-    @{ Host = "CCL-PC6"; Octet = 248; Label = "Raveesh"            },
+    @{ Host = "CCL-PC6"; Octet = 247; Label = "Raveesh"            },
     @{ Host = "CCL-PC7"; Octet = 241; Label = "Salman"             },
     @{ Host = "CCL-PC8"; Octet = 242; Label = "Mukesh"             }
 )
@@ -191,82 +192,64 @@ function Restart-Shell {
 
 
 # ------------------------- DRIVE MAP HELPERS ------------------------
-# Map one drive -> returns { Letter, IP, Label, OK, Planted } and prints a row.
-# If the target PC is OFFLINE, credentials + persistent registry entry are still
-# planted so Windows auto-reconnects on next login when that PC comes online.
-function Connect-Drive ($letter, $ip, $label) {
-    # 1) Always save credentials on THIS PC (works even if target is offline)
-    cmdkey /add:$ip /user:$AdminUser "/pass:$AdminPass" 2>$null | Out-Null
-
-    # 2) Fast reachability check using .NET (guaranteed 1-2 sec timeout).
-    #    Test-Connection / Test-NetConnection use WMI and can hang 30+ sec.
-    $reachable = $false
+# Quick TCP reachability check with a REAL timeout. Test-Connection / net.exe use
+# have no timeout of their own and can hang for a long time (sometimes minutes)
+# when the router is down and Windows is stuck "Identifying network...". Used to
+# fail fast on unreachable peer PCs instead of freezing the whole mapping loop.
+function Test-PortOpen ($ip, $port, $timeoutMs = 1500) {
     try {
-        $ping  = New-Object System.Net.NetworkInformation.Ping
-        $reply = $ping.Send($ip, 1000)          # 1-second timeout
-        $reachable = ($reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success)
-        $ping.Dispose()
-    } catch { $reachable = $false }
-
-    $portOk = $false
-    if ($reachable) {
-        try {
-            $tcp  = New-Object System.Net.Sockets.TcpClient
-            $task = $tcp.ConnectAsync($ip, 445)
-            $portOk = $task.Wait(2000)           # 2-second timeout
-            $tcp.Close(); $tcp.Dispose()
-        } catch { $portOk = $false }
-    }
-
-    $ok      = $false
-    $planted = $false
-
-    if ($reachable -and $portOk) {
-        # Target is reachable -- try actual connection
-        & net.exe use "${letter}:" /delete /y *>$null
-        & net.exe use "${letter}:" "\\$ip\$ShareName" /persistent:yes *>$null
-        $ok = ($LASTEXITCODE -eq 0)
-    }
-
-    if (-not $ok) {
-        # Connection failed or PC offline -- plant persistent mapping in registry
-        # so Windows auto-reconnects on next login / restart.
-        & net.exe use "${letter}:" /delete /y *>$null
-        $regPath = "HKCU:\Network\$letter"
-        if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
-        Set-ItemProperty -Path $regPath -Name RemotePath     -Value "\\$ip\$ShareName"          -Type String -Force
-        Set-ItemProperty -Path $regPath -Name UserName       -Value ""                           -Type String -Force
-        Set-ItemProperty -Path $regPath -Name ProviderName   -Value "Microsoft Windows Network"  -Type String -Force
-        Set-ItemProperty -Path $regPath -Name ProviderType   -Value 0x20000                      -Type DWord  -Force
-        Set-ItemProperty -Path $regPath -Name ConnectionType -Value 1                            -Type DWord  -Force
-        Set-ItemProperty -Path $regPath -Name DeferFlags     -Value 4                            -Type DWord  -Force
-        $planted = $true
-    }
-
-    # 3) Always plant drive label (shows correct name in Explorer)
-    $key = "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2\##$ip#$ShareName"
-    reg add $key /v _LabelFromReg /t REG_SZ /d "$label" /f 2>$null | Out-Null
-
-    # 4) Status display
-    $row = "     {0,-4} {1,-26} {2,-20} " -f "$letter`:", "\\$ip\$ShareName", $label
-    if ($ok) {
-        Write-Host $row -NoNewline -ForegroundColor Gray
-        Write-Host "OK" -ForegroundColor Green
-    } elseif (-not $reachable) {
-        Write-Host $row -NoNewline -ForegroundColor Gray
-        Write-Host "PLANTED (offline -- auto-connect on next login)" -ForegroundColor Cyan
-    } elseif (-not $portOk) {
-        Write-Host $row -NoNewline -ForegroundColor Gray
-        Write-Host "PLANTED (port 445 closed -- auto-connect later)" -ForegroundColor Cyan
-    } else {
-        Write-Host $row -NoNewline -ForegroundColor Gray
-        Write-Host "PLANTED (connect failed -- auto-connect later)" -ForegroundColor Cyan
-    }
-
-    return [pscustomobject]@{ Letter = $letter; IP = $ip; Label = $label; OK = $ok; Planted = $planted }
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect($ip, $port, $null, $null)
+        $ok = $iar.AsyncWaitHandle.WaitOne($timeoutMs) -and $client.Connected
+        if ($ok) { $client.EndConnect($iar) }
+        $client.Close()
+        return $ok
+    } catch { return $false }
 }
 
-# I: = own folder (Inbox) + other PCs on J,K,L... (from list, on given series)
+# Map one drive -> returns { Letter, IP, Label, OK } and prints a row
+function Connect-Drive ($letter, $ip, $label) {
+    if (-not (Test-PortOpen $ip 445)) {
+        Write-Host ("     {0,-4} {1,-26} {2,-20} " -f "$letter`:", "\\$ip\$ShareName", $label) -NoNewline -ForegroundColor Gray
+        Write-Host "FAIL" -ForegroundColor Red
+        return [pscustomobject]@{ Letter = $letter; IP = $ip; Label = $label; OK = $false }
+    }
+    cmdkey /add:$ip /user:$AdminUser "/pass:$AdminPass" 2>$null | Out-Null
+    & net.exe use "${letter}:" /delete /y *>$null
+    & net.exe use "${letter}:" "\\$ip\$ShareName" /persistent:yes *>$null
+    $ok = ($LASTEXITCODE -eq 0)
+    if ($ok) {
+        $key = "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2\##$ip#$ShareName"
+        reg add $key /v _LabelFromReg /t REG_SZ /d "$label" /f 2>$null | Out-Null
+    }
+    $status = if ($ok) { "OK" } else { "FAIL" }
+    $color  = if ($ok) { "Green" } else { "Red" }
+    Write-Host ("     {0,-4} {1,-26} {2,-20} " -f "$letter`:", "\\$ip\$ShareName", $label) -NoNewline -ForegroundColor Gray
+    Write-Host $status -ForegroundColor $color
+    return [pscustomobject]@{ Letter = $letter; IP = $ip; Label = $label; OK = $ok }
+}
+
+# I: = own folder (Inbox) -- LOCAL only (subst), never touches the network.
+# Earlier versions mapped this over SMB to the PC's own IP (a full network
+# round-trip through the switch back to itself). When the router died,
+# Windows' Network Location Awareness could get stuck "Identifying
+# network..." and that self-addressed SMB call would hang, freezing the
+# whole tool before it even reached the other PCs / printer. subst is a
+# pure local drive-letter alias, so it can never hang regardless of
+# router/network state.
+function Connect-InboxLocal {
+    & net.exe use "I:" /delete /y *>$null   # remove any old network-based Inbox mapping
+    subst I: /d *>$null                     # remove any previous subst
+    subst I: $LocalPath *>$null
+    $ok = (Test-Path "I:\")
+    $status = if ($ok) { "OK" } else { "FAIL" }
+    $color  = if ($ok) { "Green" } else { "Red" }
+    Write-Host ("     {0,-4} {1,-26} {2,-20} " -f "I:", $LocalPath, "Inbox") -NoNewline -ForegroundColor Gray
+    Write-Host $status -ForegroundColor $color
+    return [pscustomobject]@{ Letter = "I"; IP = $null; Label = "Inbox"; OK = $ok }
+}
+
+# I: = own folder (Inbox, local) + other PCs on J,K,L... (from list, on given series)
 function Set-AllDrives ($series) {
     Write-Host ""
     Write-Info "Mapping drives..."
@@ -274,9 +257,8 @@ function Set-AllDrives ($series) {
     Write-Host ("     {0,-4} {1,-26} {2,-20} {3}" -f "DRV","PATH","LABEL","STATUS") -ForegroundColor DarkGray
 
     $results = @()
-    $selfIP  = Get-MyLanIP
-    if ($selfIP) { $results += Connect-Drive "I" $selfIP "Inbox" }
-    else { Write-Warn "No LAN IP on this PC -- Inbox skipped." }
+    if (Test-Path $LocalPath) { $results += Connect-InboxLocal }
+    else { Write-Warn "Local folder '$LocalPath' not found -- Inbox skipped (run SETUP (2) first)." }
 
     $others  = $Pcs | Where-Object { $_.Host -ine $env:COMPUTERNAME }
     $letters = @('J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z')
@@ -288,14 +270,11 @@ function Set-AllDrives ($series) {
     }
 
     Restart-Shell
-    $good    = ($results | Where-Object { $_.OK }).Count
-    $plant   = ($results | Where-Object { $_.Planted }).Count
+    $good = ($results | Where-Object { $_.OK }).Count
+    $bad  = ($results | Where-Object { -not $_.OK }).Count
     Write-Host ""
-    Write-Ok "$good drives connected now.  (I: = Inbox)"
-    if ($plant -gt 0) {
-        Write-Info "$plant drives planted (credentials + persistent entry saved)."
-        Write-Info "Jab woh PC ready hoga, next login/restart pe auto-connect ho jayega."
-    }
+    Write-Ok "$good drives mapped.  (I: = Inbox)"
+    if ($bad -gt 0) { Write-Warn "$bad drives failed (that PC not ready yet? run again later)." }
 }
 
 
@@ -314,6 +293,7 @@ function Invoke-Cleanup {
     foreach ($code in 69..90) {   # E: .. Z: force delete (local disks ignored)
         & net.exe use ("{0}:" -f [char]$code) /delete /y *>$null
     }
+    subst I: /d *>$null   # Inbox is a local subst now, not a net-use mapping
     Write-Ok "All mapped drives deleted (including dead/stuck ones)."
 
     # remove saved network credentials (including old PC-name ones)
@@ -441,7 +421,8 @@ function Repair-Firewall {
         @{ N="OfficeTool-Print-Out";  D="Outbound"; P="TCP"; Port=@(9100,515,631) },  # PC -> printer: RAW/JetDirect, LPR, IPP
         @{ N="OfficeTool-Print-In";   D="Inbound";  P="TCP"; Port=@(9100,515,631) },  # in case this PC hosts/shares the printer
         @{ N="OfficeTool-SNMP-Out";   D="Outbound"; P="UDP"; Port=@(161)          },  # PC -> printer: status queries
-        @{ N="OfficeTool-SNMP-In";    D="Inbound";  P="UDP"; Port=@(161,162)      }   # status replies / traps
+        @{ N="OfficeTool-SNMP-In";    D="Inbound";  P="UDP"; Port=@(161,162)      },  # status replies / traps
+        @{ N="OfficeTool-WinRM-In";   D="Inbound";  P="TCP"; Port=@(5985)         }   # remote fleet health-check (Option 12)
     )
     foreach ($a in $allow) {
         Remove-NetFirewallRule -Name $a.N -ErrorAction SilentlyContinue
@@ -457,43 +438,7 @@ function Repair-Firewall {
     Remove-NetFirewallRule -Name "OfficeTool-Ping-In" -ErrorAction SilentlyContinue
     New-NetFirewallRule -Name "OfficeTool-Ping-In" -DisplayName "OfficeTool-Ping-In" -Direction Inbound -Action Allow `
         -Protocol ICMPv4 -IcmpType 8 -Profile Any -RemoteAddress LocalSubnet -ErrorAction SilentlyContinue | Out-Null
-    # ping outbound (echo reply) -- ensures this PC can also SEND pings
-    Remove-NetFirewallRule -Name "OfficeTool-Ping-Out" -ErrorAction SilentlyContinue
-    New-NetFirewallRule -Name "OfficeTool-Ping-Out" -DisplayName "OfficeTool-Ping-Out" -Direction Outbound -Action Allow `
-        -Protocol ICMPv4 -Profile Any -RemoteAddress LocalSubnet -ErrorAction SilentlyContinue | Out-Null
     Write-Ok "Printer ports (9100/515/631 print, 161/162 SNMP) explicitly allowed, LAN-only."
-
-    # Disable ANY block rule that could override our ICMP allow (Block > Allow in WFW)
-    Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True -ErrorAction SilentlyContinue | ForEach-Object {
-        $pf = $_ | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue
-        if ($pf -and $pf.Protocol -eq 'ICMPv4') {
-            Disable-NetFirewallRule -Name $_.Name -ErrorAction SilentlyContinue
-        }
-    }
-    Write-Ok "ICMP block rules disabled (ping cannot be blocked by hidden rules)."
-
-    # ---- ROUTER-DEAD FIX: force Private profile even when network is "Unidentified" ----
-    # When router goes down, Windows NLA marks network "Unidentified" -> defaults to PUBLIC
-    # -> blocks sharing/ping even though our rules are Profile=Any (some built-in blocks
-    #    are profile-scoped and override our allows). Fix: force Private at registry level.
-
-    # A) Set all existing network profiles to Private (Category=1) in registry
-    $nlProfiles = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
-    Get-ChildItem $nlProfiles -ErrorAction SilentlyContinue | ForEach-Object {
-        Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-    }
-    # B) Also set via cmdlet (immediate effect on active connections)
-    Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object {
-        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-    }
-    # C) Restart NLA so it re-reads the registry (applies even if router is already dead)
-    Restart-Service NlaSvc -Force -ErrorAction SilentlyContinue
-    # D) Re-apply Private after NLA restart (NLA may re-evaluate on restart)
-    Start-Sleep -Milliseconds 500
-    Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object {
-        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-    }
-    Write-Ok "All network profiles forced to Private (survives router-off / unidentified network)."
 
     # Password-protected sharing ON (blocks anonymous/Guest access to shares).
     # "ForceGuest = 0" = Classic model: a real matching username+password is required.
@@ -502,6 +447,23 @@ function Repair-Firewall {
     Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'ForceGuest' -Value 0 -Type DWord -ErrorAction SilentlyContinue
     Disable-LocalUser -Name 'Guest' -ErrorAction SilentlyContinue
     Write-Ok "Password-protected sharing ON (anonymous/Guest access blocked; needs a restart to fully apply)."
+}
+
+
+# ---- REMOTING helper (enables Option 12 : Remote Fleet Check) ----
+# PowerShell Remoting (WinRM) is built into Windows -- nothing to install.
+# We enable it here (same places Repair-Firewall is called) so a plain
+# re-run of Setup/Harden/Set-IP-by-Name on every PC is all that's needed;
+# no extra manual step. TrustedHosts is scoped to this office's own
+# subnet only (not "*"), matching the LocalSubnet-only philosophy used
+# everywhere else in this tool.
+function Enable-Remoting {
+    try {
+        Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction Stop | Out-Null
+        Set-Item WSMan:\localhost\Client\TrustedHosts -Value "$(Get-MySeries).*" -Force -ErrorAction SilentlyContinue
+        Restart-Service WinRM -ErrorAction SilentlyContinue
+        Write-Ok "Remote fleet check (WinRM) enabled -- Option 12 can now query this PC."
+    } catch { Write-Warn "Remoting setup: $($_.Exception.Message)" }
 }
 
 
@@ -515,6 +477,7 @@ function Invoke-Setup {
         Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
     }
     Repair-Firewall
+    Enable-Remoting
     reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLinkedConnections /t REG_DWORD /d 1 /f | Out-Null
     Write-Ok "Firewall + Private profile + linked-connections set."
 
@@ -563,6 +526,7 @@ function Optimize-Network {
         Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
     }
     Repair-Firewall
+    Enable-Remoting
     Write-Ok "Firewall: sharing+printer ON for Private (Public stays OFF), LAN-only allow-rules (in+out), ping ON."
 
     # NetBIOS over TCP/IP ON (via registry -- reliable on every Windows)
@@ -732,9 +696,7 @@ function Invoke-Diagnose {
     if ($lan) {
         $gw = ((Get-NetIPConfiguration -InterfaceIndex $lan.ifIndex).IPv4DefaultGateway | Select-Object -First 1).NextHop
         if ($gw) {
-            $gwUp = $false
-            try { $p = New-Object System.Net.NetworkInformation.Ping; $gwUp = ($p.Send($gw,1000).Status -eq [System.Net.NetworkInformation.IPStatus]::Success); $p.Dispose() } catch {}
-            if ($gwUp) { Write-Ok "Gateway $gw reachable (internet path OK)." }
+            if (Test-Connection -ComputerName $gw -Count 1 -Quiet -ErrorAction SilentlyContinue) { Write-Ok "Gateway $gw reachable (internet path OK)." }
             else { Write-Warn "Gateway $gw not reachable (router dead?)." ; [void]$manual.Add("Need internet? run HOTSPOT NET (6). LAN sharing still works.") }
         } else { Write-Info "No gateway set (LAN-only mode -- fine for sharing)." }
     }
@@ -815,12 +777,9 @@ function Invoke-Diagnose {
     foreach ($pc in $Pcs) {
         if ($pc.Host -ieq $env:COMPUTERNAME) { continue }
         $tip  = "$series0.$($pc.Octet)"
-        $ping = $false
-        try { $p = New-Object System.Net.NetworkInformation.Ping; $ping = ($p.Send($tip,1000).Status -eq [System.Net.NetworkInformation.IPStatus]::Success); $p.Dispose() } catch {}
+        $ping = Test-Connection -ComputerName $tip -Count 1 -Quiet -ErrorAction SilentlyContinue
         $smbOk = $false
-        if ($ping) {
-            try { $tc = New-Object System.Net.Sockets.TcpClient; $smbOk = $tc.ConnectAsync($tip,445).Wait(2000); $tc.Close(); $tc.Dispose() } catch {}
-        }
+        if ($ping) { $smbOk = (Test-NetConnection -ComputerName $tip -Port 445 -InformationLevel Quiet -WarningAction SilentlyContinue) }
         $pTxt = if ($ping) {"UP"} else {"DOWN"};  $pCol = if ($ping) {"Green"} else {"Red"}
         $sTxt = if ($smbOk){"OK"} else {"--"};    $sCol = if ($smbOk){"Green"} else {"Yellow"}
         Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $tip) -NoNewline -ForegroundColor Gray
@@ -872,6 +831,7 @@ function Set-IPByName {
         Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
     }
     Repair-Firewall
+    Enable-Remoting
     reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLinkedConnections /t REG_DWORD /d 1 /f | Out-Null
     Write-Ok "Firewall + Private profile + linked-connections set."
 
@@ -1101,6 +1061,81 @@ function Invoke-PrinterFix {
 }
 
 
+# ===============  OPTION 12 : REMOTE FLEET CHECK  ====================
+# Pulls a live, READ-ONLY status snapshot from every other PC over
+# PowerShell Remoting (WinRM) -- no physical visit needed. Requires that
+# PC to have run Setup(2)/Harden(3)/Set-IP-by-Name(8) at least once since
+# this update (that's what enables WinRM + opens the firewall port).
+# IMPORTANT: only Get-* calls run remotely -- this must never touch a
+# stranger's live desktop session (no Restart-Shell, no config changes).
+function Get-RemoteHealthSnapshot ($ip, $octet, $cred) {
+    try {
+        $so = New-PSSessionOption -OperationTimeout 5000
+        $r = Invoke-Command -ComputerName $ip -Credential $cred -SessionOption $so -ErrorAction Stop -ScriptBlock {
+            param($expectOctet, $shareName)
+            $prof = Get-NetConnectionProfile -ErrorAction SilentlyContinue | Select-Object -First 1
+            $ipObj = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                     Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' } |
+                     Select-Object -First 1
+            $gw = ((Get-NetIPConfiguration -ErrorAction SilentlyContinue).IPv4DefaultGateway | Select-Object -First 1).NextHop
+            $gwUp = $false
+            if ($gw) { $gwUp = Test-Connection -ComputerName $gw -Count 1 -Quiet -ErrorAction SilentlyContinue }
+            $pingRule = Get-NetFirewallRule -Name "OfficeTool-Ping-In" -ErrorAction SilentlyContinue
+            [pscustomobject]@{
+                IP          = $ipObj.IPAddress
+                OctetOk     = ($ipObj.IPAddress -and $ipObj.IPAddress.EndsWith(".$expectOctet"))
+                Category    = if ($prof) { $prof.NetworkCategory } else { "Unknown" }
+                GatewayUp   = $gwUp
+                PingRuleOn  = [bool]($pingRule -and $pingRule.Enabled -eq 'True')
+                ShareExists = [bool](Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue)
+            }
+        } -ArgumentList $octet, $ShareName
+        return $r
+    } catch { return $null }
+}
+
+function Invoke-RemoteFleetCheck {
+    Write-Section "REMOTE FLEET CHECK  -  live status from every PC, no physical visit needed"
+    Write-Info "How it works: uses PowerShell Remoting (WinRM) -- READ-ONLY, does not touch anyone's desktop."
+    Write-Info "Needs Setup(2)/Harden(3)/Set-IP-by-Name(8) to have been re-run once on each PC for this to work."
+    Write-Host ""
+
+    $cred   = New-Object System.Management.Automation.PSCredential($AdminUser, (ConvertTo-SecureString $AdminPass -AsPlainText -Force))
+    $series = Get-MySeries
+    $others = $Pcs | Where-Object { $_.Host -ine $env:COMPUTERNAME }
+
+    Write-Host ("     {0,-20} {1,-16} {2,-10} {3,-12} {4,-8} {5,-8} {6}" -f "LABEL","IP","WINRM","CATEGORY","GW-UP","PINGRULE","SHARE") -ForegroundColor DarkGray
+    foreach ($pc in $others) {
+        $ip = "$series.$($pc.Octet)"
+        if (-not (Test-PortOpen $ip 5985)) {
+            Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $ip) -NoNewline -ForegroundColor Gray
+            Write-Host "unreachable" -ForegroundColor Red
+            continue
+        }
+        $snap = Get-RemoteHealthSnapshot $ip $pc.Octet $cred
+        if (-not $snap) {
+            Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $ip) -NoNewline -ForegroundColor Gray
+            Write-Host "auth/RPC FAIL" -ForegroundColor Red
+            continue
+        }
+        $catCol = if ($snap.Category -eq 'Private') { 'Green' } else { 'Yellow' }
+        $gwCol  = if ($snap.GatewayUp) { 'Green' } else { 'Yellow' }
+        $prCol  = if ($snap.PingRuleOn) { 'Green' } else { 'Red' }
+        $shCol  = if ($snap.ShareExists) { 'Green' } else { 'Red' }
+        Write-Host ("     {0,-20} {1,-16} " -f $pc.Label, $ip) -NoNewline -ForegroundColor Gray
+        Write-Host ("{0,-10}" -f "OK") -NoNewline -ForegroundColor Green
+        Write-Host ("{0,-12}" -f $snap.Category) -NoNewline -ForegroundColor $catCol
+        Write-Host ("{0,-8}" -f $(if ($snap.GatewayUp) {"UP"} else {"DOWN"})) -NoNewline -ForegroundColor $gwCol
+        Write-Host ("{0,-8}" -f $(if ($snap.PingRuleOn) {"ON"} else {"OFF"})) -NoNewline -ForegroundColor $prCol
+        Write-Host ("{0}" -f $(if ($snap.ShareExists) {"OK"} else {"MISSING"})) -ForegroundColor $shCol
+    }
+
+    Write-Host ""
+    Write-Info "'unreachable' = WinRM port closed (router/switch down, or that PC hasn't re-run Setup/Harden/Set-IP-by-Name since this update)."
+    Write-Info "CATEGORY should stay 'Private' even with the router off -- if it shows Public/Identifying, that's why ping/sharing drops."
+}
+
+
 # =========================  MAIN MENU  ==============================
 $sep = "  +" + ("-" * 5) + "+" + ("-" * 18) + "+" + ("-" * 40) + "+"
 $fmt = "  | {0,3} | {1,-16} | {2,-38} |"
@@ -1123,11 +1158,12 @@ do {
     Write-Host ($fmt -f "9",  "Map Drives",     "Only re-map drives (2nd pass)")       -ForegroundColor Gray
     Write-Host ($fmt -f "10", "Accounts",       "Create / delete local accounts")      -ForegroundColor Gray
     Write-Host ($fmt -f "11", "Printer Fix",    "Win7 <-> Win11 printer sharing fix")  -ForegroundColor Gray
+    Write-Host ($fmt -f "12", "Remote Check",   "Live status from all PCs, no visit")  -ForegroundColor Gray
     Write-Host $sep -ForegroundColor DarkCyan
     Write-Host ($fmt -f "0",  "Exit",           "")                                    -ForegroundColor DarkGray
     Write-Host $sep -ForegroundColor DarkCyan
     Write-Host ""
-    $choice = (Read-Host "     Choose option (0-11)").Trim()
+    $choice = (Read-Host "     Choose option (0-12)").Trim()
 
     switch ($choice) {
         '1'  { Invoke-Cleanup }
@@ -1141,8 +1177,9 @@ do {
         '9'  { Invoke-MapDrivesOnly }
         '10' { Invoke-AccountManager }
         '11' { Invoke-PrinterFix }
+        '12' { Invoke-RemoteFleetCheck }
         '0'  { Write-Host "`n     Bye!`n" -ForegroundColor Cyan }
-        default { Write-Warn "Wrong option. Choose 0 to 11." }
+        default { Write-Warn "Wrong option. Choose 0 to 12." }
     }
 
     if ($choice -ne '0') { Write-Host ""; Read-Host "     Press Enter -> back to menu" | Out-Null }
