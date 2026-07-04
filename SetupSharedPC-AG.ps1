@@ -457,7 +457,43 @@ function Repair-Firewall {
     Remove-NetFirewallRule -Name "OfficeTool-Ping-In" -ErrorAction SilentlyContinue
     New-NetFirewallRule -Name "OfficeTool-Ping-In" -DisplayName "OfficeTool-Ping-In" -Direction Inbound -Action Allow `
         -Protocol ICMPv4 -IcmpType 8 -Profile Any -RemoteAddress LocalSubnet -ErrorAction SilentlyContinue | Out-Null
+    # ping outbound (echo reply) -- ensures this PC can also SEND pings
+    Remove-NetFirewallRule -Name "OfficeTool-Ping-Out" -ErrorAction SilentlyContinue
+    New-NetFirewallRule -Name "OfficeTool-Ping-Out" -DisplayName "OfficeTool-Ping-Out" -Direction Outbound -Action Allow `
+        -Protocol ICMPv4 -Profile Any -RemoteAddress LocalSubnet -ErrorAction SilentlyContinue | Out-Null
     Write-Ok "Printer ports (9100/515/631 print, 161/162 SNMP) explicitly allowed, LAN-only."
+
+    # Disable ANY block rule that could override our ICMP allow (Block > Allow in WFW)
+    Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True -ErrorAction SilentlyContinue | ForEach-Object {
+        $pf = $_ | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue
+        if ($pf -and $pf.Protocol -eq 'ICMPv4') {
+            Disable-NetFirewallRule -Name $_.Name -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Ok "ICMP block rules disabled (ping cannot be blocked by hidden rules)."
+
+    # ---- ROUTER-DEAD FIX: force Private profile even when network is "Unidentified" ----
+    # When router goes down, Windows NLA marks network "Unidentified" -> defaults to PUBLIC
+    # -> blocks sharing/ping even though our rules are Profile=Any (some built-in blocks
+    #    are profile-scoped and override our allows). Fix: force Private at registry level.
+
+    # A) Set all existing network profiles to Private (Category=1) in registry
+    $nlProfiles = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+    Get-ChildItem $nlProfiles -ErrorAction SilentlyContinue | ForEach-Object {
+        Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+    }
+    # B) Also set via cmdlet (immediate effect on active connections)
+    Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object {
+        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+    }
+    # C) Restart NLA so it re-reads the registry (applies even if router is already dead)
+    Restart-Service NlaSvc -Force -ErrorAction SilentlyContinue
+    # D) Re-apply Private after NLA restart (NLA may re-evaluate on restart)
+    Start-Sleep -Milliseconds 500
+    Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object {
+        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+    }
+    Write-Ok "All network profiles forced to Private (survives router-off / unidentified network)."
 
     # Password-protected sharing ON (blocks anonymous/Guest access to shares).
     # "ForceGuest = 0" = Classic model: a real matching username+password is required.
