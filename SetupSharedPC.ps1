@@ -34,11 +34,11 @@ $Series = "192.168.0"
 # 3) MASTER LIST -- Windows PC name -> last IP number -> drive label
 #    (IP = <series>.<Octet> , e.g. 192.168.0.241 for CCL-PC7)
 $Pcs = @(
-    @{ Host = "CCL-PC2"; Octet = 247; Label = "Mohit"              },
+    @{ Host = "CCL-PC2"; Octet = 246; Label = "Mohit"              },
     @{ Host = "CCL-PC3"; Octet = 244; Label = "Sunil Kushwaha Sir" },
-    @{ Host = "CCL-PC4"; Octet = 246; Label = "Vipin"              },
+    @{ Host = "CCL-PC4"; Octet = 248; Label = "Vipin"              },
     @{ Host = "CCL-PC5"; Octet = 243; Label = "Aseem Meena Sir"    },
-    @{ Host = "CCL-PC6"; Octet = 248; Label = "Raveesh"            },
+    @{ Host = "CCL-PC6"; Octet = 247; Label = "Raveesh"            },
     @{ Host = "CCL-PC7"; Octet = 241; Label = "Salman"             },
     @{ Host = "CCL-PC8"; Octet = 242; Label = "Mukesh"             }
 )
