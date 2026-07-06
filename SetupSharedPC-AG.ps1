@@ -30,12 +30,12 @@ $InboxLetter = "I"
 #   Name  = doosre PC ka naam   |   Label = drive ka naam jo "This PC" me dikhega
 $PCMap = @(
     @{ Name = "CCL-PC2"; Label = "Mohit"  }
-    @{ Name = "CCL-PC3"; Label = "Label3" }
-    @{ Name = "CCL-PC4"; Label = "Label4" }
-    @{ Name = "CCL-PC5"; Label = "Label5" }
-    @{ Name = "CCL-PC6"; Label = "Label6" }
-    @{ Name = "CCL-PC7"; Label = "Label7" }
-    @{ Name = "CCL-PC8"; Label = "Label8" }
+    @{ Name = "CCL-PC3"; Label = "Sunil Kushwaha Sir" }
+    @{ Name = "CCL-PC4"; Label = "Vipin" }
+    @{ Name = "CCL-PC5"; Label = "Aseem Sir" }
+    @{ Name = "CCL-PC6"; Label = "Raveesh" }
+    @{ Name = "CCL-PC7"; Label = "Salman" }
+    @{ Name = "CCL-PC8"; Label = "Mukesh" }
 )
 
 # ----- DRIVE MAP: IP wali list (Option 2 -> 2) -----
