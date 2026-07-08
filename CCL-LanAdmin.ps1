@@ -43,10 +43,10 @@ $Global:CFG = [ordered]@{
 
     # --- Workgroup / Network ---------------------------------------------
     Workgroup   = 'WORKGROUP'   # Windows default -- functionally optional, sharing isse independent chalta hai
-    Subnet      = '192.168.10'          # /24
+    Subnet      = '192.168.1'          # /24
     Mask        = '255.255.255.0'
-    Gateway     = '192.168.10.1'        # router; blank '' rakho agar na chahiye
-    DnsServers  = @('192.168.10.1')     # blank @() = router/DHCP DNS
+    Gateway     = '192.168.1.1'        # router; blank '' rakho agar na chahiye
+    DnsServers  = @('192.168.1.1')     # blank @() = router/DHCP DNS
 
     # --- PCs : name -> last IP octet --------------------------------------
     #     IP = Subnet + '.' + Octet   (CCL-PC1 => 192.168.10.101)
@@ -71,14 +71,13 @@ $Global:CFG = [ordered]@{
     #     DriveLetter -> @{ Host=PC name ; Share=shared folder ; Label=sidebar naam }
     #     Label/Host apni marzi se badal lena.
     DriveMaps = [ordered]@{
-        'M' = @{ Host = 'CCL-PC1'; Share = 'Shared';  Label = 'Mohit'   }
-        'N' = @{ Host = 'CCL-PC2'; Share = 'Shared';  Label = 'Mukesh'  }
-        'O' = @{ Host = 'CCL-PC3'; Share = 'Shared';  Label = 'Rakesh'  }
-        'P' = @{ Host = 'CCL-PC4'; Share = 'Shared';  Label = 'Suresh'  }
-        'Q' = @{ Host = 'CCL-PC5'; Share = 'Shared';  Label = 'Naresh'  }
-        'R' = @{ Host = 'CCL-PC6'; Share = 'Shared';  Label = 'Dinesh'  }
-        'S' = @{ Host = 'CCL-PC7'; Share = 'Shared';  Label = 'Ramesh'  }
-        'T' = @{ Host = 'CCL-PC8'; Share = 'Shared';  Label = 'Ganesh'  }
+        'N' = @{ Host = 'CCL-PC2'; Share = 'Shared';  Label = 'Mohit'  }
+        'O' = @{ Host = 'CCL-PC3'; Share = 'Shared';  Label = 'Sunil Kushwaha Sir'  }
+        'P' = @{ Host = 'CCL-PC4'; Share = 'Shared';  Label = 'Vipin'  }
+        'Q' = @{ Host = 'CCL-PC5'; Share = 'Shared';  Label = 'Aseem Sir'  }
+        'R' = @{ Host = 'CCL-PC6'; Share = 'Shared';  Label = 'Raveesh'  }
+        'S' = @{ Host = 'CCL-PC7'; Share = 'Shared';  Label = 'Salman'  }
+        'T' = @{ Host = 'CCL-PC8'; Share = 'Shared';  Label = 'Mukesh'  }
     }
 
     # --- Folders to share on THIS pc (Share module) -----------------------
